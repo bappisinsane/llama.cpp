@@ -347,6 +347,7 @@ struct cmd_params {
     std::vector<ggml_type>           type_k;
     std::vector<ggml_type>           type_v;
     std::vector<int>                 n_threads;
+    bool                             use_smt;
     std::vector<std::string>         cpu_mask;
     std::vector<bool>                cpu_strict;
     std::vector<int>                 poll;
@@ -393,6 +394,7 @@ static const cmd_params cmd_params_defaults = {
     /* type_k               */ { GGML_TYPE_F16 },
     /* type_v               */ { GGML_TYPE_F16 },
     /* n_threads            */ { common_cpu_get_num_math() },
+    /* use_smt              */ false,
     /* cpu_mask             */ { "0x0" },
     /* cpu_strict           */ { false },
     /* poll                 */ { 50 },
@@ -467,6 +469,7 @@ static void print_usage(int /* argc */, char ** argv) {
     printf("  -ctk, --cache-type-k <t>                          (default: %s)\n", join(transform_to_str(cmd_params_defaults.type_k, ggml_type_name), ",").c_str());
     printf("  -ctv, --cache-type-v <t>                          (default: %s)\n", join(transform_to_str(cmd_params_defaults.type_v, ggml_type_name), ",").c_str());
     printf("  -t, --threads <n>                                 (default: %s)\n", join(cmd_params_defaults.n_threads, ",").c_str());
+    printf("  --use-smt                                        use all logical cores including SMT threads (default: disabled)\n");
     printf("  -C, --cpu-mask <hex,hex>                          (default: %s)\n", join(cmd_params_defaults.cpu_mask, ",").c_str());
     printf("  --cpu-strict <0|1>                                (default: %s)\n", join(cmd_params_defaults.cpu_strict, ",").c_str());
     printf("  --poll <0...100>                                  (default: %s)\n", join(cmd_params_defaults.poll, ",").c_str());
@@ -526,6 +529,7 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
     cmd_params        params;
     std::string       arg;
     bool              invalid_param = false;
+    bool              threads_set   = false;
     const std::string arg_prefix    = "--";
     const char        split_delim   = ',';
 
@@ -539,6 +543,7 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
     params.progress             = cmd_params_defaults.progress;
     params.no_warmup            = cmd_params_defaults.no_warmup;
     params.offline              = cmd_params_defaults.offline;
+    params.use_smt              = cmd_params_defaults.use_smt;
 
     if (const char * env = getenv("HF_TOKEN")) {
         params.hf_token = env;
@@ -700,6 +705,9 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                 }
                 auto p = parse_int_range(argv[i]);
                 params.n_threads.insert(params.n_threads.end(), p.begin(), p.end());
+                threads_set = true;
+            } else if (arg == "--use-smt") {
+                params.use_smt = true;
             } else if (arg == "-C" || arg == "--cpu-mask") {
                 if (++i >= argc) {
                     invalid_param = true;
@@ -1188,6 +1196,9 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
     }
     if (params.n_threads.empty()) {
         params.n_threads = cmd_params_defaults.n_threads;
+    }
+    if (params.use_smt && !threads_set) {
+        params.n_threads = { (int) std::thread::hardware_concurrency() };
     }
     if (params.cpu_mask.empty()) {
         params.cpu_mask = cmd_params_defaults.cpu_mask;
